@@ -56,14 +56,28 @@ service_create_container() {
   local SERVICE_HOST_ROOT="$PLUGIN_DATA_HOST_ROOT/$SERVICE"
   local SERVICE_NAME="$(get_service_name "$SERVICE")"
 
-  ID=$(docker run --name "$SERVICE_NAME" -v "$SERVICE_HOST_ROOT/data:/usr/share/elasticsearch/data" -v "$SERVICE_HOST_ROOT/config:/usr/share/elasticsearch/config" --env-file="$SERVICE_ROOT/ENV" -d --restart always --label dokku=service --label dokku.service=elasticsearch "$PLUGIN_IMAGE:$PLUGIN_IMAGE_VERSION")
-  echo "$ID" > "$SERVICE_ROOT/ID"
+  local MAJOR_VERSION="$(echo $PLUGIN_IMAGE_VERSION | sed -e 's/\..\+//')"
 
-  dokku_log_info2 "Copying config files into place"
-  retry-docker-command "$ID" "cp -arfp --no-clobber /etc/elasticsearch/. /usr/share/elasticsearch/config/"
-  retry-docker-command "$ID" "echo 'network.host: 0.0.0.0' >> /usr/share/elasticsearch/config/elasticsearch.yml"
-  retry-docker-command "$ID" "rm -rf /etc/elasticsearch && ln -sfn /usr/share/elasticsearch/config /etc/elasticsearch"
-  retry-docker-command "$ID" "chown -R root:elasticsearch /etc/elasticsearch"
+  if [ "$MAJOR_VERSION" -gt "5" ]; then
+    ID=$(docker run --name "$SERVICE_NAME" -v "$SERVICE_ROOT/data:/usr/share/elasticsearch/data" --env-file="$SERVICE_ROOT/ENV" -d --restart always --label dokku=service --label dokku.service=elasticsearch "$PLUGIN_IMAGE:$PLUGIN_IMAGE_VERSION")
+
+    echo "$ID" > "$SERVICE_ROOT/ID"
+
+    # Grant permissions on data volume.
+    # Elasticsearch service is not run as root anymore.
+    dokku_log_info2 "Granting permissions on data volume"
+    retry-docker-command "$ID" "chown -R elasticsearch:elasticsearch /usr/share/elasticsearch/data"
+  else
+    ID=$(docker run --name "$SERVICE_NAME" -v "$SERVICE_HOST_ROOT/data:/usr/share/elasticsearch/data" -v "$SERVICE_HOST_ROOT/config:/usr/share/elasticsearch/config" --env-file="$SERVICE_ROOT/ENV" -d --restart always --label dokku=service --label dokku.service=elasticsearch "$PLUGIN_IMAGE:$PLUGIN_IMAGE_VERSION")
+
+    echo "$ID" > "$SERVICE_ROOT/ID"
+
+    dokku_log_info2 "Copying config files into place"
+    retry-docker-command "$ID" "cp -arfp --no-clobber /etc/elasticsearch/. /usr/share/elasticsearch/config/"
+    retry-docker-command "$ID" "echo 'network.host: 0.0.0.0' >> /usr/share/elasticsearch/config/elasticsearch.yml"
+    retry-docker-command "$ID" "rm -rf /etc/elasticsearch && ln -sfn /usr/share/elasticsearch/config /etc/elasticsearch"
+    retry-docker-command "$ID" "chown -R root:elasticsearch /etc/elasticsearch"
+  fi
   docker restart "$ID" > /dev/null
 
   dokku_log_verbose_quiet "Waiting for container to be ready"
